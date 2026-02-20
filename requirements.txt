@@ -1,4 +1,6 @@
 firebase-admin==6.5.0
 flask==3.0.0
-functions-framework==3.5.0
+functions-framework==3.*
 requests==2.31.0
+lxml>=4.9.0
+beautifulsoup4>=4.11.0
