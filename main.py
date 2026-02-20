@@ -1,62 +1,40 @@
-import firebase_admin
-from firebase_admin import db
-import functions_framework
 import requests
+from bs4 import BeautifulSoup # Para o Scraping
 import time
 
-if not firebase_admin._apps:
-    firebase_admin.initialize_app(options={
-        'databaseURL': 'https://airy-rock-462023-h2-default-rtdb.firebaseio.com/' 
-    })
-
-@functions_framework.http
-def process_data(request):
-    data = request.get_json(silent=True)
-    regiao = data.get('regiao', 'Brasília')
-    
-    # Tenta obter coordenadas. Se não vierem, busca no ViaCEP/Nominatim (Grátis)
-    lat = data.get('lat')
-    lng = data.get('lng')
-    
-    if lat is None or lng is None:
-        lat, lng = free_geo_resolver(regiao)
-
-    try:
-        ref = db.reference('alertas_seguranca')
-        ref.push({
-            'regiao': regiao,
-            'mensagem': data.get('mensagem', f"Alerta em {regiao}"),
-            'nivel_risco': data.get('nivel_risco', 0.5),
-            'lat': lat,
-            'lng': lng,
-            'timestamp': int(time.time() * 1000)
-        })
-        return "Dados processados com sucesso!", 200
-    except Exception as e:
-        return f"Falha na Pipeline: {e}", 500
-
-def free_geo_resolver(localizacao):
+def scrap_noticias_df():
     """
-    RESOLVER DE LOCALIZAÇÃO CUSTO ZERO.
-    Tenta ViaCEP (se for CEP) ou Nominatim (OpenStreetMap).
+    Busca notícias recentes para criar microdados onde a SSP falha.
     """
-    try:
-        # 1. Se for CEP (8 dígitos)
-        if localizacao.isdigit() and len(localizacao) == 8:
-            res = requests.get(f"https://viacep.com.br/ws/{localizacao}/json/").json()
-            # Nota: ViaCEP não dá Lat/Lng, precisaríamos de uma tabela de de-para.
-            # Como alternativa, usamos o Nominatim (OSM)
-            pass 
-
-        # 2. Busca no OpenStreetMap (Gratuito para baixo volume)
-        url = f"https://nominatim.openstreetmap.org/search?q={localizacao},Brasilia&format=json&limit=1"
-        headers = {'User-Agent': 'Pandora_OS_Project'}
-        response = requests.get(url, headers=headers).json()
+    # Exemplo: Scraping simplificado de feed RSS ou busca
+    url = "https://www.metropoles.com/distrito-federal/seguranca/feed"
+    response = requests.get(url)
+    soup = BeautifulSoup(response.content, 'xml')
+    
+    novos_alertas = []
+    for item in soup.find_all('item'):
+        titulo = item.title.text
+        link = item.link.text
         
-        if response:
-            return float(response[0]['lat']), float(response[0]['lon'])
-    except:
-        pass
-    
-    # Fallback de segurança (Marco Zero de Brasília)
-    return -15.7941, -47.8825
+        # Classificação básica por palavras-chave
+        if any(word in titulo.lower() for word in ['tiroteio', 'assalto', 'sequestro', 'furto']):
+            # Tenta extrair o local do título ou descrição
+            local = extrair_local_nlu(titulo)
+            lat, lng = resolve_geo_gratis(local) # Nossa função de Geocoding
+            
+            novos_alertas.append({
+                'regiao': local,
+                'mensagem': titulo,
+                'lat': lat,
+                'lng': lng,
+                'nivel_risco': 0.9,
+                'timestamp': int(time.time() * 1000)
+            })
+    return novos_alertas
+
+def extrair_local_nlu(texto):
+    """
+    Lógica simples para identificar se o crime foi na 'comercial', 'eixo', 'qnl', etc.
+    """
+    # Aqui entra o seu conhecimento de Brasília para filtrar termos comuns
+    return texto.split(" em ")[-1] # Exemplo simplista
