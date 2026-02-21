@@ -7,7 +7,7 @@ import functions_framework
 from bs4 import BeautifulSoup
 import re
 
-# PANDORA OS V12 - GOLD RELEASE (DEBUG MODE)
+# PANDORA OS V12 - GOLD RELEASE
 if not firebase_admin._apps:
     firebase_admin.initialize_app(options={
         'databaseURL': 'https://airy-rock-462023-h2-default-rtdb.firebaseio.com/' 
@@ -23,41 +23,48 @@ def run_osint_pipeline():
     total_count = 0
     ref = db.reference('alertas_seguranca')
     
-    print("🛰️ PANDORA: Iniciando Ingestão...")
+    # 🕵️ MÁSCARA DE BROWSER (Header Realista)
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+        'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
+        'Cache-Control': 'no-cache',
+        'Pragma': 'no-cache',
+        'Connection': 'keep-alive'
+    }
+
+    print("🛰️ PANDORA: Iniciando Ingestão camuflada...")
 
     for source in SOURCES:
         try:
-            # Bypass de Cache e User-Agent Realista
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                'Cache-Control': 'no-cache'
-            }
+            # Faz a requisição simulando um navegador
             response = requests.get(source['url'], timeout=15, headers=headers)
             
-            # Debug de Tamanho: Se for < 1000, o site bloqueou o GCP
-            print(f"📡 {source['name']} - Bytes recebidos: {len(response.content)}")
+            # Auditoria de Resposta
+            print(f"📡 {source['name']} | Status: {response.status_code} | Bytes: {len(response.content)}")
 
-            # Mudança Tática: 'html.parser' é mais tolerante a erros de fechamento de tag no RSS
+            if response.status_code != 200:
+                print(f"⚠️ {source['name']} bloqueou o acesso (Status {response.status_code}).")
+                continue
+
+            # Parser tolerante a erros de XML em fluxos HTML
             soup = BeautifulSoup(response.content, 'html.parser')
-            items = soup.find_all('item')
+            items = soup.find_all(['item', 'entry'])
             
-            if not items:
-                # Fallback: Algumas fontes usam 'entry' (padrão Atom)
-                items = soup.find_all('entry')
-
-            print(f"📰 {source['name']}: {len(items)} itens filtrados.")
+            print(f"📰 {source['name']}: {len(items)} notícias lidas.")
 
             for i, item in enumerate(items):
-                if i >= 5: break # Pega as 5 primeiras para garantir o teste
+                if i >= 5: break # Limite de 5 notícias por fonte para teste
                 
-                # Tenta pegar título de várias formas possíveis (title ou atom:title)
-                titulo = item.title.text if item.title else "Sem Título"
+                titulo = "Sem Título"
+                if item.title:
+                    titulo = item.title.text.strip()
                 
-                # INJEÇÃO DIRETA (BYPASS TOTAL PARA VALIDAR O FIREBASE)
+                # PERSISTÊNCIA NO FIREBASE
                 ref.push({
                     'regiao': "Setor Central",
                     'mensagem': f"[{source['name']}] {titulo}",
-                    'nivel_risco': 0.8,
+                    'nivel_risco': 0.7,
                     'categoria': 'info',
                     'lat': -15.7941,
                     'lng': -47.8825,
@@ -68,7 +75,7 @@ def run_osint_pipeline():
         except Exception as e:
             print(f"❌ ERRO {source['name']}: {str(e)}")
 
-    return f"Fim. {total_count} registros injetados.", 200
+    return f"Fim da rodada. {total_count} registros injetados.", 200
 
 @functions_framework.http
 def process_data(request):
