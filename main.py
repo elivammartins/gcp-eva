@@ -1,13 +1,11 @@
-import os
 import time
 import requests
 import firebase_admin
 from firebase_admin import db
 import functions_framework
-from bs4 import BeautifulSoup
 import re
 
-# PANDORA OS V12 - GOLD RELEASE
+# PANDORA OS V12 - GOLD RELEASE (BRUTE FORCE EDITION)
 if not firebase_admin._apps:
     firebase_admin.initialize_app(options={
         'databaseURL': 'https://airy-rock-462023-h2-default-rtdb.firebaseio.com/' 
@@ -23,54 +21,49 @@ def run_osint_pipeline():
     total_count = 0
     ref = db.reference('alertas_seguranca')
     
-    # 🕵️ MÁSCARA DE BROWSER (Header Realista)
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-        'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
-        'Cache-Control': 'no-cache',
-        'Pragma': 'no-cache',
-        'Connection': 'keep-alive'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
     }
 
-    print("🛰️ PANDORA: Iniciando Ingestão camuflada...")
+    print("🛰️ PANDORA: Iniciando extração Brute Force...")
 
     for source in SOURCES:
         try:
-            # Faz a requisição simulando um navegador
             response = requests.get(source['url'], timeout=15, headers=headers)
+            content = response.text # Lemos como texto bruto
             
-            # Auditoria de Resposta
-            print(f"📡 {source['name']} | Status: {response.status_code} | Bytes: {len(response.content)}")
+            print(f"📡 {source['name']} | Status: {response.status_code} | Tamanho: {len(content)} chars")
 
-            if response.status_code != 200:
-                print(f"⚠️ {source['name']} bloqueou o acesso (Status {response.status_code}).")
-                continue
-
-            # Parser tolerante a erros de XML em fluxos HTML
-            soup = BeautifulSoup(response.content, 'html.parser')
-            items = soup.find_all(['item', 'entry'])
+            # REGEX para pegar o conteúdo entre <title> e </title> que esteja dentro de um <item>
+            # Buscamos o padrão de blocos <item>...</item>
+            items = re.findall(r'<item>(.*?)</item>', content, re.DOTALL | re.IGNORECASE)
             
-            print(f"📰 {source['name']}: {len(items)} notícias lidas.")
+            if not items:
+                # Fallback para Atom (Agência Brasília usa muito)
+                items = re.findall(r'<entry>(.*?)</entry>', content, re.DOTALL | re.IGNORECASE)
 
-            for i, item in enumerate(items):
-                if i >= 5: break # Limite de 5 notícias por fonte para teste
+            print(f"📰 {source['name']}: {len(items)} blocos brutos encontrados.")
+
+            for i, item_content in enumerate(items):
+                if i >= 5: break
                 
-                titulo = "Sem Título"
-                if item.title:
-                    titulo = item.title.text.strip()
+                # Extrai o título do bloco bruto
+                title_match = re.search(r'<title>(.*?)</title>', item_content, re.IGNORECASE | re.DOTALL)
                 
-                # PERSISTÊNCIA NO FIREBASE
-                ref.push({
-                    'regiao': "Setor Central",
-                    'mensagem': f"[{source['name']}] {titulo}",
-                    'nivel_risco': 0.7,
-                    'categoria': 'info',
-                    'lat': -15.7941,
-                    'lng': -47.8825,
-                    'timestamp': int(time.time() * 1000)
-                })
-                total_count += 1
+                if title_match:
+                    # Limpa possíveis tags CDATA
+                    titulo = title_match.group(1).replace('<![CDATA[', '').replace(']]>', '').strip()
+                    
+                    ref.push({
+                        'regiao': "Distrito Federal",
+                        'mensagem': f"[{source['name']}] {titulo}",
+                        'nivel_risco': 0.8,
+                        'categoria': 'info',
+                        'lat': -15.7941,
+                        'lng': -47.8825,
+                        'timestamp': int(time.time() * 1000)
+                    })
+                    total_count += 1
                 
         except Exception as e:
             print(f"❌ ERRO {source['name']}: {str(e)}")
