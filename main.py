@@ -7,14 +7,24 @@ import functions_framework
 from bs4 import BeautifulSoup
 import re
 
+# =============================================================================
+# PROJETO: PANDORA OS (V12-GOLD)
+# MÓDULO: INGESTOR OSINT
+# DESCRIÇÃO: Coleta dados do G1, Metrópoles e Agência BSB.
+#            Garante a visibilidade tática no cockpit do HB20.
+# =============================================================================
+
+# Inicialização do Firebase com verificação de instância
 if not firebase_admin._apps:
     firebase_admin.initialize_app(options={
         'databaseURL': 'https://airy-rock-462023-h2-default-rtdb.firebaseio.com/' 
     })
 
+# REGEX AMPLIADO: Termos mais comuns no jornalismo policial e de trânsito do DF
 TACTICAL_KEYWORDS = {
-    'danger': (r'tiroteio|assalto|furto|crime|preso|morte|homicídio|facada|polícia|corpo', 1.0),
-    'traffic': (r'acidente|capotamento|atropelamento|colisão|congestionamento', 0.6)
+    'danger': (r'tiroteio|assalto|furto|crime|preso|morte|homicídio|facada|polícia|pmdf|corpo|detido|roubo|investiga|presos|militar|civil|arma|disparos', 1.0),
+    'traffic': (r'acidente|capotamento|atropelamento|colisão|congestionamento|trânsito|eptg|estrutural|br-020|sia|leste|oeste|eixão|parado|km', 0.6),
+    'infra': (r'obras|interdição|alagamento|manutenção|falta de energia|caesb|der|detran', 0.4)
 }
 
 SOURCES = [
@@ -27,30 +37,39 @@ def run_osint_pipeline():
     total_count = 0
     ref = db.reference('alertas_seguranca')
     
+    print("🚀 PANDORA: Iniciando varredura tática nas fontes OSINT...")
+
     for source in SOURCES:
         try:
-            print(f"📡 Tentando conectar em: {source['name']}")
-            response = requests.get(source['url'], timeout=15, headers={'User-Agent': 'PandoraV12-Gold'})
-            # Usando 'html.parser' por ser nativo e evitar erros de dependência XML no GCP
-            soup = BeautifulSoup(response.content, 'html.parser')
+            # Headers para evitar bloqueio (User-Agent tático)
+            headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) PandoraOS/12.0'}
+            response = requests.get(source['url'], timeout=15, headers=headers)
+            
+            # Usando o parser XML do BeautifulSoup
+            soup = BeautifulSoup(response.content, 'xml')
             items = soup.find_all('item')
             
-            print(f"📰 {source['name']} retornou {len(items)} itens.")
+            print(f"📡 FONTE: {source['name']} | ITENS ENCONTRADOS: {len(items)}")
 
             for item in items:
                 titulo = item.title.text
-                text_to_analyze = titulo.lower()
+                # Log de debug para auditoria no Cloud Logging
+                print(f"🔍 ANALISANDO: {titulo[:60]}...") 
                 
+                text_to_analyze = titulo.lower()
+                matched = False
+
                 for key, (pattern, weight) in TACTICAL_KEYWORDS.items():
                     if re.search(pattern, text_to_analyze):
-                        # Se achou keyword, tenta extrair local
-                        local_raw = titulo.split(" em ")[-1] if " em " in titulo else "Distrito Federal"
+                        # Extração inteligente de local: Tenta pegar o que vem após "em" ou "no/na"
+                        local_match = re.search(r'(?:em|no|na)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)', titulo)
+                        local_raw = local_match.group(1) if local_match else "Distrito Federal"
                         
-                        # GEO-CHECK
+                        # Resolução de Geo (com Fallback para Brasília Centro)
                         lat, lng = resolve_geo_df(local_raw)
                         
                         payload = {
-                            'regiao': local_raw[:30], # DBA: Limita tamanho da string
+                            'regiao': local_raw,
                             'mensagem': f"[{source['name']}] {titulo}",
                             'nivel_risco': weight,
                             'categoria': key,
@@ -60,21 +79,28 @@ def run_osint_pipeline():
                         }
                         
                         ref.push(payload)
+                        print(f"✅ INJETADO: {titulo[:40]} | Local: {local_raw}")
                         total_count += 1
-                        print(f"✅ INJETADO: {titulo[:40]}...")
-                        break # Pula para o próximo item
+                        matched = True
+                        break # Encontrou uma categoria, pula para o próximo item
+                
         except Exception as e:
             print(f"❌ ERRO NA FONTE {source['name']}: {str(e)}")
 
-    return f"Fim da rodada. {total_count} registros.", 200
+    return f"Fim da rodada. {total_count} registros injetados.", 200
 
 def resolve_geo_df(local):
-    # Forçamos Taguatinga se o Nominatim falhar, para você ver a mancha!
-    if "taguatinga" in local.lower(): return -15.8322, -48.0511
-    if "sia" in local.lower(): return -15.7941, -47.9584
+    """Fallback Geográfico Tático para o DF"""
+    l = local.lower()
+    if "taguatinga" in l: return -15.8322, -48.0511
+    if "ceilândia" in l or "ceilandia" in l: return -15.8174, -48.1130
+    if "sia" in l: return -15.7941, -47.9584
+    if "guará" in l or "guara" in l: return -15.8235, -47.9772
+    if "gama" in l: return -16.0125, -48.0674
+    # Centro de Brasília (Rodoviária)
     return -15.7941, -47.8825
 
 @functions_framework.http
 def process_data(request):
-    # Chamada via Cloud Scheduler ou Manual
+    # Aceita GET ou POST para facilitar o Scheduler
     return run_osint_pipeline()
