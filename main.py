@@ -5,7 +5,9 @@ from firebase_admin import db
 import functions_framework
 import re
 
-# PANDORA OS V12 - GOLD RELEASE (BRUTE FORCE EDITION)
+# TAG DE VERSÃO PARA VOCÊ VER NO CURL
+VERSION_TAG = "V13-BRUTE-FORCE-GOLD-001"
+
 if not firebase_admin._apps:
     firebase_admin.initialize_app(options={
         'databaseURL': 'https://airy-rock-462023-h2-default-rtdb.firebaseio.com/' 
@@ -17,7 +19,11 @@ SOURCES = [
     {"name": "Agência Brasília", "url": "https://www.agenciabrasilia.df.gov.br/feed/"}
 ]
 
-def run_osint_pipeline():
+@functions_framework.http
+def process_data(request):
+    # LOG IMEDIATO PARA SABER QUE O DEPLOY RODOU
+    print(f"🔥 [DEPLOY OK] Executando versão: {VERSION_TAG}")
+    
     total_count = 0
     ref = db.reference('alertas_seguranca')
     
@@ -25,51 +31,48 @@ def run_osint_pipeline():
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
     }
 
-    print("🛰️ PANDORA: Iniciando extração Brute Force...")
+    results_summary = []
 
     for source in SOURCES:
         try:
+            print(f"📡 Tentando conectar em: {source['name']}")
             response = requests.get(source['url'], timeout=15, headers=headers)
-            content = response.text # Lemos como texto bruto
+            content = response.text
             
-            print(f"📡 {source['name']} | Status: {response.status_code} | Tamanho: {len(content)} chars")
+            # Verificamos se o conteúdo veio
+            size = len(content)
+            print(f"📦 {source['name']} retornou {size} caracteres.")
 
-            # REGEX para pegar o conteúdo entre <title> e </title> que esteja dentro de um <item>
-            # Buscamos o padrão de blocos <item>...</item>
+            # Busca bruta de itens
             items = re.findall(r'<item>(.*?)</item>', content, re.DOTALL | re.IGNORECASE)
-            
             if not items:
-                # Fallback para Atom (Agência Brasília usa muito)
                 items = re.findall(r'<entry>(.*?)</entry>', content, re.DOTALL | re.IGNORECASE)
 
-            print(f"📰 {source['name']}: {len(items)} blocos brutos encontrados.")
-
+            source_count = 0
             for i, item_content in enumerate(items):
-                if i >= 5: break
+                if i >= 3: break # Garantimos 3 de cada fonte
                 
-                # Extrai o título do bloco bruto
                 title_match = re.search(r'<title>(.*?)</title>', item_content, re.IGNORECASE | re.DOTALL)
-                
                 if title_match:
-                    # Limpa possíveis tags CDATA
                     titulo = title_match.group(1).replace('<![CDATA[', '').replace(']]>', '').strip()
                     
+                    # GRAVAÇÃO DIRETA NO FIREBASE
                     ref.push({
-                        'regiao': "Distrito Federal",
+                        'regiao': "Injeção Forçada V13",
                         'mensagem': f"[{source['name']}] {titulo}",
-                        'nivel_risco': 0.8,
-                        'categoria': 'info',
-                        'lat': -15.7941,
-                        'lng': -47.8825,
+                        'nivel_risco': 0.9,
+                        'categoria': 'seguranca',
+                        'lat': -15.8322, # Taguatinga para você ver no mapa
+                        'lng': -48.0511,
                         'timestamp': int(time.time() * 1000)
                     })
                     total_count += 1
+                    source_count += 1
+            
+            results_summary.append(f"{source['name']}: {source_count} itens")
                 
         except Exception as e:
-            print(f"❌ ERRO {source['name']}: {str(e)}")
+            print(f"❌ ERRO EM {source['name']}: {str(e)}")
 
-    return f"Fim da rodada. {total_count} registros injetados.", 200
-
-@functions_framework.http
-def process_data(request):
-    return run_osint_pipeline()
+    # RETORNO COM A TAG DE VERSÃO
+    return f"Versão: {VERSION_TAG} | {total_count} registros injetados. Detalhes: {results_summary}", 200
